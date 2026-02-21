@@ -1,0 +1,36 @@
+version: '3.8'
+
+services:
+  youtube-downloader:
+    build: .
+    container_name: youtube-downloader
+    ports:
+      - "8080:8080"
+    environment:
+      - PYTHONUNBUFFERED=1
+    restart: unless-stopped
+    volumes:
+      - downloads:/tmp/downloads
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.youtube-downloader.rule=Host(`youtube-downloader.traefik.me`)"
+      - "traefik.http.routers.youtube-downloader.entrypoints=web"
+      - "traefik.http.services.youtube-downloader.loadbalancer.server.port=8080"
+
+  traefik:
+    image: traefik:v2.11
+    container_name: traefik
+    command:
+      - "--api.insecure=true"
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--entrypoints.web.address=:80"
+    ports:
+      - "80:80"
+      - "8081:8080"  # Traefik dashboard
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    restart: unless-stopped
+
+volumes:
+  downloads:
