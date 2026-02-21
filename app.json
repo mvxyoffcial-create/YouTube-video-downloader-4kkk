@@ -1,0 +1,19 @@
+{
+  "name": "youtube-downloader",
+  "type": "web",
+  "port": 8080,
+  "build": {
+    "dockerfile": "Dockerfile"
+  },
+  "healthcheck": {
+    "path": "/health",
+    "interval": 30
+  },
+  "env": {
+    "PYTHONUNBUFFERED": "1"
+  },
+  "resources": {
+    "memory": "512Mi",
+    "cpu": "500m"
+  }
+}
