@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, BackgroundTasks
+from fastapi import FastAPI, HTTPException, BackgroundTasks, UploadFile, File
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -8,6 +8,7 @@ import uuid
 from pathlib import Path
 import asyncio
 from typing import Optional
+import json
 
 app = FastAPI(title="YouTube Downloader API", version="1.0.0")
 
@@ -24,6 +25,11 @@ app.add_middleware(
 # Download directory
 DOWNLOAD_DIR = Path("/tmp/downloads")
 DOWNLOAD_DIR.mkdir(exist_ok=True)
+
+# Cookies directory
+COOKIES_DIR = Path("/tmp/cookies")
+COOKIES_DIR.mkdir(exist_ok=True)
+COOKIES_FILE = COOKIES_DIR / "cookies.txt"
 
 class DownloadRequest(BaseModel):
     url: str
@@ -117,6 +123,12 @@ async def home():
             button:hover {
                 background: #cc0000;
             }
+            button.secondary {
+                background: #666;
+            }
+            button.secondary:hover {
+                background: #444;
+            }
             #status {
                 margin-top: 20px;
                 padding: 15px;
@@ -138,6 +150,11 @@ async def home():
                 color: #0c5460;
                 border: 1px solid #bee5eb;
             }
+            .info {
+                background: #fff3cd;
+                color: #856404;
+                border: 1px solid #ffeaa7;
+            }
             .formats {
                 display: grid;
                 grid-template-columns: 1fr 1fr;
@@ -151,11 +168,77 @@ async def home():
                 color: #555;
                 font-size: 14px;
             }
+            .help-section {
+                background: #f8f9fa;
+                padding: 15px;
+                border-radius: 5px;
+                margin: 20px 0;
+                border-left: 4px solid #ff0000;
+            }
+            .help-section h3 {
+                margin-top: 0;
+                color: #ff0000;
+            }
+            .help-section ol {
+                margin: 10px 0;
+                padding-left: 20px;
+            }
+            .help-section li {
+                margin: 5px 0;
+                line-height: 1.6;
+            }
+            .cookie-section {
+                background: #e9ecef;
+                padding: 15px;
+                border-radius: 5px;
+                margin: 15px 0;
+            }
+            .cookie-status {
+                display: inline-block;
+                padding: 5px 10px;
+                border-radius: 3px;
+                font-size: 12px;
+                font-weight: bold;
+            }
+            .cookie-status.active {
+                background: #d4edda;
+                color: #155724;
+            }
+            .cookie-status.inactive {
+                background: #f8d7da;
+                color: #721c24;
+            }
+            input[type="file"] {
+                padding: 8px;
+            }
         </style>
     </head>
     <body>
         <div class="container">
             <h1>🎥 YouTube Downloader</h1>
+            
+            <div class="help-section">
+                <h3>⚠️ Getting "Sign in to confirm you're not a bot" Error?</h3>
+                <p><strong>Solution:</strong> Export your YouTube cookies and upload them below.</p>
+                <ol>
+                    <li>Install browser extension: <strong>"Get cookies.txt LOCALLY"</strong> (Chrome/Firefox)</li>
+                    <li>Go to <strong>youtube.com</strong> and make sure you're logged in</li>
+                    <li>Click the extension icon and click <strong>"Export"</strong></li>
+                    <li>Save the <code>cookies.txt</code> file</li>
+                    <li>Upload it in the section below ⬇️</li>
+                </ol>
+            </div>
+
+            <div class="cookie-section">
+                <h3>🍪 Cookie Management</h3>
+                <p>
+                    Status: <span class="cookie-status inactive" id="cookieStatus">No cookies uploaded</span>
+                </p>
+                <input type="file" id="cookieFile" accept=".txt" />
+                <button onclick="uploadCookies()" class="secondary">Upload Cookies</button>
+                <button onclick="deleteCookies()" class="secondary">Delete Cookies</button>
+            </div>
+            
             <input type="text" id="url" placeholder="Enter YouTube URL..." />
             
             <div class="format-section">
@@ -195,6 +278,9 @@ async def home():
         </div>
 
         <script>
+            // Check cookie status on load
+            checkCookieStatus();
+
             const audioOnlyCheckbox = document.getElementById('audioOnly');
             const formatSelect = document.getElementById('format');
             const audioFormatSelect = document.getElementById('audioFormat');
@@ -208,6 +294,87 @@ async def home():
                     audioFormatSelect.style.display = 'none';
                 }
             });
+
+            async function checkCookieStatus() {
+                try {
+                    const response = await fetch('/cookies/status');
+                    const data = await response.json();
+                    const statusEl = document.getElementById('cookieStatus');
+                    
+                    if (data.has_cookies) {
+                        statusEl.textContent = '✅ Cookies active';
+                        statusEl.className = 'cookie-status active';
+                    } else {
+                        statusEl.textContent = '❌ No cookies';
+                        statusEl.className = 'cookie-status inactive';
+                    }
+                } catch (error) {
+                    console.error('Error checking cookie status:', error);
+                }
+            }
+
+            async function uploadCookies() {
+                const fileInput = document.getElementById('cookieFile');
+                const file = fileInput.files[0];
+                const status = document.getElementById('status');
+                
+                if (!file) {
+                    status.className = 'error';
+                    status.style.display = 'block';
+                    status.textContent = 'Please select a cookies.txt file';
+                    return;
+                }
+
+                const formData = new FormData();
+                formData.append('cookies', file);
+
+                status.className = 'loading';
+                status.style.display = 'block';
+                status.textContent = '⏳ Uploading cookies...';
+
+                try {
+                    const response = await fetch('/upload-cookies', {
+                        method: 'POST',
+                        body: formData
+                    });
+
+                    if (response.ok) {
+                        status.className = 'success';
+                        status.textContent = '✅ Cookies uploaded successfully! Bot detection should be fixed.';
+                        checkCookieStatus();
+                    } else {
+                        throw new Error('Upload failed');
+                    }
+                } catch (error) {
+                    status.className = 'error';
+                    status.textContent = '❌ Error uploading cookies: ' + error.message;
+                }
+            }
+
+            async function deleteCookies() {
+                const status = document.getElementById('status');
+                
+                status.className = 'loading';
+                status.style.display = 'block';
+                status.textContent = '⏳ Deleting cookies...';
+
+                try {
+                    const response = await fetch('/cookies', {
+                        method: 'DELETE'
+                    });
+
+                    if (response.ok) {
+                        status.className = 'success';
+                        status.textContent = '✅ Cookies deleted successfully!';
+                        checkCookieStatus();
+                    } else {
+                        throw new Error('Delete failed');
+                    }
+                } catch (error) {
+                    status.className = 'error';
+                    status.textContent = '❌ Error deleting cookies: ' + error.message;
+                }
+            }
 
             async function downloadVideo() {
                 const url = document.getElementById('url').value;
@@ -263,7 +430,11 @@ async def home():
                     status.textContent = '✅ Download complete!';
                 } catch (error) {
                     status.className = 'error';
-                    status.textContent = '❌ Error: ' + error.message;
+                    if (error.message.includes('bot')) {
+                        status.textContent = '❌ Bot detected! Please upload YouTube cookies (see instructions above ⬆️)';
+                    } else {
+                        status.textContent = '❌ Error: ' + error.message;
+                    }
                 }
             }
         </script>
@@ -289,7 +460,20 @@ async def download_video(request: DownloadRequest, background_tasks: BackgroundT
             'quiet': True,
             'no_warnings': True,
             'extract_flat': False,
+            # Anti-bot detection measures
+            'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'referer': 'https://www.youtube.com/',
+            'http_headers': {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                'Accept-Language': 'en-us,en;q=0.5',
+                'Sec-Fetch-Mode': 'navigate',
+            },
         }
+        
+        # Add cookies if available
+        if COOKIES_FILE.exists():
+            ydl_opts['cookiefile'] = str(COOKIES_FILE)
         
         # Add audio conversion if needed
         if audio_format:
@@ -367,6 +551,34 @@ def cleanup_file(file_path: Path):
             file_path.unlink()
     except Exception:
         pass
+
+@app.post("/upload-cookies")
+async def upload_cookies(cookies: UploadFile = File(...)):
+    """Upload YouTube cookies to bypass bot detection"""
+    try:
+        content = await cookies.read()
+        COOKIES_FILE.write_bytes(content)
+        return {"message": "Cookies uploaded successfully", "status": "success"}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+@app.delete("/cookies")
+async def delete_cookies():
+    """Delete uploaded cookies"""
+    try:
+        if COOKIES_FILE.exists():
+            COOKIES_FILE.unlink()
+        return {"message": "Cookies deleted successfully", "status": "success"}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+@app.get("/cookies/status")
+async def cookies_status():
+    """Check if cookies are uploaded"""
+    return {
+        "has_cookies": COOKIES_FILE.exists(),
+        "file_size": COOKIES_FILE.stat().st_size if COOKIES_FILE.exists() else 0
+    }
 
 @app.get("/health")
 async def health_check():
